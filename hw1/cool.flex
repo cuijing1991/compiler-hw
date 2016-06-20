@@ -45,8 +45,10 @@ extern YYSTYPE cool_yylval;
  
 #define ERROR(msg) do { cool_yylval.error_msg = (msg); return (ERROR);} while (0)
 #define string_buf_push(c) \
-    if (c == '\0') ERROR("String contains null character");\
-    if(string_buf_ptr - string_buf == MAX_STR_CONST - 1) ERROR("String constant too long");\
+    if (c == '\0') { BEGIN(string_contains_errors); string_error_msg = "String contains null character"; } \
+    if(string_buf_ptr - string_buf == MAX_STR_CONST - 1) { \
+      BEGIN(string_contains_errors); \
+      string_error_msg = "String constant too long"; } \
 	  *string_buf_ptr++ = (c);
 %}
 
@@ -102,12 +104,21 @@ COMMENT_NL	    \n
 COMMENT_END 	  \*\)
 
 %x str
+%x string_contains_errors
+%{
+  char *string_error_msg;
+%}
+
 STR_START       \"
 STR_NULL        \0
 STR_NL          \\\n
 STR_UNESP_NL    \n
 STR_CHAR        [^"\\\n]
 STR_END         \"
+STR_ESP         \\.
+STR_ERROR_BODY	({STR_CHAR}|{STR_ESP})*
+STR_ERROR_NL    {STR_NL}
+STR_ERROR_END 	{STR_END}|{STR_UNESP_NL}
 
 %%
 
@@ -210,6 +221,15 @@ STR_END         \"
 	                      BEGIN(INITIAL);
 	                      return (STR_CONST);
                       }
+                      
+<string_contains_errors>{STR_ERROR_BODY}     { }
+<string_contains_errors>{STR_ERROR_NL}       {
+	                                             ++curr_lineno;
+                                             }
+<string_contains_errors>{STR_ERROR_END}      {
+	                                             BEGIN(INITIAL);
+	                                             ERROR(string_error_msg);
+                                             }
 .			                { ERROR(yytext); }
 
 %%
