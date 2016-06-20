@@ -45,10 +45,9 @@ extern YYSTYPE cool_yylval;
  
 #define ERROR(msg) do { cool_yylval.error_msg = (msg); return (ERROR);} while (0)
 #define string_buf_push(c) \
-	if(string_buf_ptr - string_buf >= MAX_STR_CONST) \
-  ERROR("String constant too long"); \
-	*string_buf_ptr++ = (c);
-
+    if (c == '\0') ERROR("String contains null character");\
+    if(string_buf_ptr - string_buf == MAX_STR_CONST - 1) ERROR("String constant too long");\
+	  *string_buf_ptr++ = (c);
 %}
 
 /*
@@ -98,6 +97,8 @@ SPACE 		      [ \t\v\f\r]*
 %}
 LINE_COMMENT 	  --[^\n]*
 COMMENT_START   \(\*
+COMMENT_BODY 	([^\*\(\n]|\([^\*]|\*[^\)\*])*
+COMMENT_NL	    \n
 COMMENT_END 	  \*\)
 
 %x str
@@ -116,45 +117,21 @@ STR_END         \"
   *  Nested comments
   */
 
-{LINE_COMMENT}  { }
-
-<comment>{COMMENT_START}			      {
-                                      int c;
-                                      comment_level = 0;
-                                      start_comment();
-                    	                while ((c = yyinput()) != 0)
-                    	                {
-                                        if (c == '\n')
-                    			              curr_lineno++;
-                    		                else if (c == '*')
-                    		                {
-                                          int cc = yyinput();
-                    			                if (cc == ')')
-                    			                {
-                                            end_comment();
-                                            if (comment_level == 0) break;
-                    		              	  }
-                    		                	else
-                                            unput(cc);
-                    		                }
-                    		                else if (c == '(')
-                    		                {
-                    			                int cc = yyinput();
-                    			                if (cc == '*')
-                    				                 comment_level++;
-                    			                else
-                                            unput(cc);
-                    		                }
-                    		                if (EOF == c)
-                    		                {
-                    			                ERROR("EOF in comment");
-                    		                }
-                    	                }
-                                      if (c == 0)
-                                         ERROR("Null character in comment");
-                    			          } // end of comments
-
-<comment>{COMMENT_END} 			        { ERROR("Unmatched *)"); }
+{LINE_COMMENT}                        { }
+<INITIAL,comment>{COMMENT_START}      {
+	                                      start_comment();
+                                      }
+<comment>\*/\* 		                    { }
+<comment>{COMMENT_BODY}               { }
+<comment>{COMMENT_NL}	                { ++curr_lineno; }
+<comment><<EOF>>                      {
+	                                      BEGIN(INITIAL);
+	                                      ERROR("EOF in comment");
+                                      }
+<comment>{COMMENT_END}  	            {
+	                                      end_comment();
+                                      }
+{COMMENT_END} 			                  { ERROR("Unmatched *)"); }
 
 
  /*
@@ -208,7 +185,6 @@ STR_END         \"
   */
 
 {STR_START}           { string_buf_ptr = string_buf; BEGIN(str); }
-<str>STR_NULL		      { ERROR("String contains null character"); }
 <str>{STR_NL}         {
 	                      string_buf_push('\n');
 	                      ++curr_lineno;
@@ -218,13 +194,16 @@ STR_END         \"
 	                      BEGIN(INITIAL);
 	                      ERROR("Unterminated string constant");
                       }
-<str><<EOF>>		      { ERROR("EOF in string constant");}
+<str><<EOF>>		      { BEGIN(INITIAL);
+                        ERROR("EOF in string constant");
+                      }
+<str>STR_NULL         { ERROR("String contains null character"); }
 <str>\\n		          { string_buf_push('\n'); }
 <str>\\t		          { string_buf_push('\t'); }
 <str>\\b		          { string_buf_push('\b'); }
 <str>\\f		          { string_buf_push('\f'); }
-
-<str>{STR_CHAR}		      { string_buf_push(yytext[0]); }
+<str>\\.              { string_buf_push(*(yytext + 1)); }
+<str>{STR_CHAR}		    { string_buf_push(yytext[0]); }
 <str>{STR_END}        {
 	                      *string_buf_ptr++ = '\0';
 	                      cool_yylval.symbol = stringtable.add_string(string_buf);
